@@ -7,6 +7,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:Microsoft.PowerToys.Settings.UI.Helpers"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:Microsoft.PowerToys.Settings.UI.Library"
     xmlns:tkcontrols="using:CommunityToolkit.WinUI.Controls"
     xmlns:ui="using:CommunityToolkit.WinUI"
     xmlns:viewModels="using:Microsoft.PowerToys.Settings.UI.ViewModels"
@@ -99,6 +100,59 @@
                         IsEnabled="{x:Bind ViewModel.IsScreenConfigurationPossibleEnabled, Mode=OneWay}">
                         <ToggleSwitch IsOn="{x:Bind ViewModel.KeepDisplayOn, Mode=TwoWay}" />
                     </tkcontrols:SettingsCard>
+                </controls:SettingsGroup>
+
+                <controls:SettingsGroup x:Uid="Awake_TrayMenuSettingsGroup" IsEnabled="{x:Bind ViewModel.IsEnabled, Mode=OneWay}">
+                    <tkcontrols:SettingsExpander
+                        Name="AwakeTrayIntervalsSettingsExpander"
+                        x:Uid="Awake_TrayIntervalsSettingsExpander"
+                        HeaderIcon="{ui:FontIcon Glyph=&#xE823;}"
+                        IsExpanded="True"
+                        ItemsSource="{x:Bind ViewModel.TrayIntervals, Mode=OneWay}">
+                        <tkcontrols:SettingsExpander.ItemTemplate>
+                            <DataTemplate x:DataType="models:AwakeTrayInterval">
+                                <tkcontrols:SettingsCard Header="{x:Bind Label, Mode=OneWay}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <NumberBox
+                                            x:Uid="Awake_TrayIntervalHoursInput"
+                                            Width="96"
+                                            LargeChange="5"
+                                            Maximum="999"
+                                            Minimum="0"
+                                            SmallChange="1"
+                                            SpinButtonPlacementMode="Compact"
+                                            Value="{x:Bind Hours, Mode=TwoWay}" />
+                                        <NumberBox
+                                            x:Uid="Awake_TrayIntervalMinutesInput"
+                                            Width="96"
+                                            LargeChange="5"
+                                            Maximum="59"
+                                            Minimum="0"
+                                            SmallChange="1"
+                                            SpinButtonPlacementMode="Compact"
+                                            Value="{x:Bind Minutes, Mode=TwoWay}" />
+                                        <Button
+                                            x:Uid="Awake_DeleteTrayIntervalButton"
+                                            Width="40"
+                                            Height="36"
+                                            VerticalAlignment="Bottom"
+                                            Click="DeleteTrayInterval_Click"
+                                            Content="{ui:FontIcon Glyph=&#xE74D;}"
+                                            Style="{StaticResource SubtleButtonStyle}"
+                                            Tag="{x:Bind}" />
+                                    </StackPanel>
+                                </tkcontrols:SettingsCard>
+                            </DataTemplate>
+                        </tkcontrols:SettingsExpander.ItemTemplate>
+
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Uid="Awake_ResetTrayIntervalsButton" Click="ResetTrayIntervals_Click" />
+                            <Button
+                                x:Uid="Awake_AddTrayIntervalButton"
+                                Click="AddTrayInterval_Click"
+                                Style="{ThemeResource AccentButtonStyle}" />
+                        </StackPanel>
+                    </tkcontrols:SettingsExpander>
                 </controls:SettingsGroup>
             </StackPanel>
         </controls:SettingsPageControl.ModuleContent>

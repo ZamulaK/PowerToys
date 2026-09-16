@@ -2563,6 +2563,60 @@ From there, simply click on one of the supported files in the File Explorer and 
   <data name="Awake_ExpirationSettingsExpander_Time.Header" xml:space="preserve">
     <value>End time</value>
   </data>
+  <data name="Awake_TrayMenuSettingsGroup.Header" xml:space="preserve">
+    <value>Tray icon menu</value>
+  </data>
+  <data name="Awake_TrayIntervalsSettingsExpander.Header" xml:space="preserve">
+    <value>Tray menu intervals</value>
+  </data>
+  <data name="Awake_TrayIntervalsSettingsExpander.Description" xml:space="preserve">
+    <value>Time intervals offered by the "Keep awake on interval" menu of the Awake tray icon</value>
+    <comment>Awake is a product name, do not localize. "Keep awake on interval" must match the AWAKE_KEEP_ON_INTERVAL string of the Awake module.</comment>
+  </data>
+  <data name="Awake_TrayIntervalHoursInput.Header" xml:space="preserve">
+    <value>Hours</value>
+  </data>
+  <data name="Awake_TrayIntervalMinutesInput.Header" xml:space="preserve">
+    <value>Minutes</value>
+  </data>
+  <data name="Awake_AddTrayIntervalButton.Content" xml:space="preserve">
+    <value>Add interval</value>
+  </data>
+  <data name="Awake_AddTrayIntervalButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Add a new tray menu interval</value>
+  </data>
+  <data name="Awake_ResetTrayIntervalsButton.Content" xml:space="preserve">
+    <value>Reset to defaults</value>
+  </data>
+  <data name="Awake_ResetTrayIntervalsButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Reset the tray menu intervals to 30 minutes, 1 hour and 2 hours</value>
+  </data>
+  <data name="Awake_DeleteTrayIntervalButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Delete interval</value>
+  </data>
+  <data name="Awake_DeleteTrayIntervalButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Delete interval</value>
+  </data>
+  <data name="Awake_TrayInterval_Minute" xml:space="preserve">
+    <value>{0} minute</value>
+    <comment>{0} shouldn't be removed. It will be replaced by the number 1 at runtime. Label of a tray menu interval.</comment>
+  </data>
+  <data name="Awake_TrayInterval_Minutes" xml:space="preserve">
+    <value>{0} minutes</value>
+    <comment>{0} shouldn't be removed. It will be replaced by a number at runtime. Label of a tray menu interval.</comment>
+  </data>
+  <data name="Awake_TrayInterval_Hour" xml:space="preserve">
+    <value>{0} hour</value>
+    <comment>{0} shouldn't be removed. It will be replaced by the number 1 at runtime. Label of a tray menu interval.</comment>
+  </data>
+  <data name="Awake_TrayInterval_Hours" xml:space="preserve">
+    <value>{0} hours</value>
+    <comment>{0} shouldn't be removed. It will be replaced by a number greater than 1 at runtime. Label of a tray menu interval.</comment>
+  </data>
+  <data name="Awake_TrayInterval_HoursAndMinutes" xml:space="preserve">
+    <value>{0} {1}</value>
+    <comment>{0} is the hours part (e.g. "1 hour") and {1} the minutes part (e.g. "30 minutes") of a tray menu interval label.</comment>
+  </data>
   <data name="Oobe_Awake.Title" xml:space="preserve">
     <value>Awake</value>
     <comment>Module name, do not loc</comment>
