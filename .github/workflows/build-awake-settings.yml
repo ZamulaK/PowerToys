@@ -105,6 +105,15 @@ jobs:
             "/p:SolutionDir=$PWD\" `
             /bl:logs\build-awake.binlog
 
+      - name: Restore XAML index builder (invoked by the Settings build, not a project reference)
+        shell: pwsh
+        run: |
+          msbuild srcsettings-uiSettings.UI.XamlIndexBuilderSettings.UI.XamlIndexBuilder.csproj `
+            /t:Restore `
+            "/p:Platform=Any CPU" `
+            /p:Configuration=$env:BuildConfiguration `
+            "/p:SolutionDir=$PWD\"
+
       - name: Build Settings UI
         shell: pwsh
         run: |
