@@ -63,7 +63,7 @@ namespace ViewModelTests
             _viewModel.ModuleSettings = new AwakeSettings();
 
             CollectionAssert.AreEqual(
-                new[] { "30 minutes", "1 hour", "2 hours" },
+                new List<string> { "30 minutes", "1 hour", "2 hours" },
                 _viewModel.TrayIntervals.Select(i => i.Label).ToList());
             Assert.AreEqual(0, _trayIntervalSaves, "Loading must not write settings.");
             Assert.AreEqual(0, _viewModel.ModuleSettings.Properties.CustomTrayTimes.Count, "Loading must leave the saved list untouched.");
@@ -79,7 +79,7 @@ namespace ViewModelTests
             _viewModel.ModuleSettings = settings;
 
             CollectionAssert.AreEqual(
-                new[] { "15 minutes", "4 hours" },
+                new List<string> { "15 minutes", "4 hours" },
                 _viewModel.TrayIntervals.Select(i => i.Label).ToList());
             Assert.AreEqual(0, _trayIntervalSaves);
         }
@@ -96,8 +96,8 @@ namespace ViewModelTests
             Assert.AreEqual(1, _trayIntervalSaves);
 
             Dictionary<string, uint> saved = _viewModel.ModuleSettings.Properties.CustomTrayTimes;
-            CollectionAssert.AreEqual(new[] { "30 minutes", "1 hour", "2 hours", "3 hours" }, saved.Keys.ToList());
-            CollectionAssert.AreEqual(new uint[] { 1800, 3600, 7200, 10800 }, saved.Values.ToList());
+            CollectionAssert.AreEqual(new List<string> { "30 minutes", "1 hour", "2 hours", "3 hours" }, saved.Keys.ToList());
+            CollectionAssert.AreEqual(new List<uint> { 1800, 3600, 7200, 10800 }, saved.Values.ToList());
         }
 
         [TestMethod]
@@ -121,7 +121,7 @@ namespace ViewModelTests
 
             Assert.AreEqual(2, _viewModel.TrayIntervals.Count);
             Assert.AreEqual(1, _trayIntervalSaves);
-            CollectionAssert.AreEqual(new[] { "1 hour", "2 hours" }, _viewModel.ModuleSettings.Properties.CustomTrayTimes.Keys.ToList());
+            CollectionAssert.AreEqual(new List<string> { "1 hour", "2 hours" }, _viewModel.ModuleSettings.Properties.CustomTrayTimes.Keys.ToList());
         }
 
         [TestMethod]
@@ -133,7 +133,7 @@ namespace ViewModelTests
 
             _viewModel.ResetTrayIntervals();
 
-            CollectionAssert.AreEqual(new[] { "30 minutes", "1 hour", "2 hours" }, _viewModel.ModuleSettings.Properties.CustomTrayTimes.Keys.ToList());
+            CollectionAssert.AreEqual(new List<string> { "30 minutes", "1 hour", "2 hours" }, _viewModel.ModuleSettings.Properties.CustomTrayTimes.Keys.ToList());
             Assert.AreEqual(1, _trayIntervalSaves);
         }
 
@@ -150,7 +150,7 @@ namespace ViewModelTests
 
             Dictionary<string, uint> trayTimes = AwakeViewModel.BuildTrayTimes(intervals);
 
-            CollectionAssert.AreEqual(new[] { "30 minutes", "1 hour" }, trayTimes.Keys.ToList());
+            CollectionAssert.AreEqual(new List<string> { "30 minutes", "1 hour" }, trayTimes.Keys.ToList());
         }
 
         [TestMethod]
