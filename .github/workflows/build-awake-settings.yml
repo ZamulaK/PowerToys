@@ -108,7 +108,7 @@ jobs:
       - name: Restore XAML index builder (invoked by the Settings build, not a project reference)
         shell: pwsh
         run: |
-          msbuild srcsettings-uiSettings.UI.XamlIndexBuilderSettings.UI.XamlIndexBuilder.csproj `
+          msbuild src\settings-ui\Settings.UI.XamlIndexBuilder\Settings.UI.XamlIndexBuilder.csproj `
             /t:Restore `
             "/p:Platform=Any CPU" `
             /p:Configuration=$env:BuildConfiguration `
