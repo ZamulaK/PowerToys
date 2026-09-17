@@ -2,7 +2,7 @@ name: Build full installer (manual)
 
 # Builds the complete PowerToys solution and produces the installer, mirroring
 # tools\build\build-installer.ps1, on a hosted Windows runner. This is a long
-# job (expect two to three hours) so it only runs when started by hand.
+# job (roughly an hour on a hosted runner) so it only runs when started by hand.
 #
 # Notes:
 # - MSIX packages (CmdPal, context-menu sparse packages) are signed with a
@@ -142,6 +142,20 @@ jobs:
               Write-Host "Patched $file"
             }
           }
+
+      - name: Skip the CurrentUser\Root certificate import (hangs on a hosted runner)
+        shell: pwsh
+        run: |
+          # cert-management.ps1 imports the self-signed MSIX certificate into CurrentUser\Root.
+          # Windows guards that store with a confirmation dialog, which nobody can click on a
+          # hosted runner, so the previous run sat there until the six-hour timeout.
+          # LocalMachine\Root (imported without a prompt) is enough for the signature chain.
+          $certScript = 'tools\build\cert-management.ps1'
+          $pattern = 'if \(-not \(ImportAndVerifyCertificate -cerPath \$cerPath -storePath "Cert:\\CurrentUser\\Root"\)\) \{ return \$null \}'
+          $content = Get-Content $certScript -Raw
+          if ($content -notmatch $pattern) { throw "Expected CurrentUser\Root import line not found in $certScript; script changed upstream." }
+          $content -replace $pattern, '# CI: CurrentUser\Root import skipped; it opens a confirmation dialog that never returns on a hosted runner.' | Set-Content $certScript -NoNewline
+          Write-Host "Patched $certScript"
 
       - name: Build solution and tools (first pass)
         shell: pwsh
