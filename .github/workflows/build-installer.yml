@@ -1,0 +1,211 @@
+name: Build full installer (manual)
+
+# Builds the complete PowerToys solution and produces the installer, mirroring
+# tools\build\build-installer.ps1, on a hosted Windows runner. This is a long
+# job (expect two to three hours) so it only runs when started by hand.
+#
+# Notes:
+# - MSIX packages (CmdPal, context-menu sparse packages) are signed with a
+#   self-signed certificate created on the runner. The .cer is uploaded next
+#   to the installer; import it into "Trusted Root Certification Authorities"
+#   and "Trusted People" on the target machine before installing.
+# - The Microsoft.Windows.Terminal.Versioning package used to stamp the CmdPal
+#   MSIX lives on a private feed, so CmdPal keeps its default 0.0.1.0 package
+#   version. Everything else is stamped with the requested version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to stamp on the build (w.x.y). Use a version higher than the installed
+          one so the installer performs an upgrade; the runner also requires the Settings
+          app version to match its own, which a single build guarantees.
+        required: true
+        default: '0.101.2600'
+      per_user:
+        description: Build the per-user installer instead of the machine-wide one.
+        type: boolean
+        required: false
+        default: false
+      enable_cmdpal_aot:
+        description: Enable AOT compilation for CmdPal (much slower build).
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NUGET_PACKAGES: D:\NuGetPackages
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  BuildPlatform: x64
+  BuildConfiguration: Release
+
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.303
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Locate vcpkg
+        shell: pwsh
+        run: |
+          $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsRoot = & $vswhere -latest -requires Microsoft.VisualStudio.Component.Vcpkg -property installationPath
+          if ([string]::IsNullOrEmpty($vsRoot)) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg deps/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg failed" }
+            & deps/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw "bootstrap-vcpkg failed" }
+            $vcpkgRoot = Resolve-Path deps/vcpkg
+            Write-Host "Using vcpkg from local clone ($vcpkgRoot)"
+          } else {
+            $vcpkgRoot = Join-Path $vsRoot 'VC\vcpkg'
+            Write-Host "Using vcpkg from Visual Studio ($vcpkgRoot)"
+          }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            D:\NuGetPackages
+            packages
+          key: nuget-installer-${{ runner.os }}-${{ hashFiles('**/packages.config', 'Directory.Packages.props', '**/*.csproj', '**/*.vcxproj', '**/*.wixproj') }}
+          restore-keys: |
+            nuget-installer-${{ runner.os }}-
+            nuget-${{ runner.os }}-
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: |
+          .\tools\build\versionSetting.ps1 -versionNumber $env:STAMP_VERSION -DevEnvironment 'Local' -Channel private -SourceCommit $env:GITHUB_SHA
+          Get-Content src\Version.props
+
+      - name: Report free disk space before build
+        shell: pwsh
+        run: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}} | Format-Table -AutoSize
+
+      - name: Build solution, tools and installer
+        shell: pwsh
+        env:
+          PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
+          CMDPAL_AOT: ${{ inputs.enable_cmdpal_aot && 'true' || 'false' }}
+        run: |
+          # The repo script uses Write-Error for a non-fatal step (the private
+          # Terminal.Versioning feed is unreachable from here) and exits explicitly
+          # on real MSBuild failures, so run it with a non-terminating preference
+          # and verify the output afterwards.
+          $ErrorActionPreference = 'Continue'
+          $args = @('-Platform', $env:BuildPlatform, '-Configuration', $env:BuildConfiguration, '-PerUser', $env:PER_USER, '-Force')
+          if ($env:CMDPAL_AOT -eq 'true') { $args += '-EnableCmdPalAOT' }
+          & .\tools\build\build-installer.ps1 @args
+          $scriptExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+
+          $setupType = if ($env:PER_USER -eq 'true') { 'UserSetup' } else { 'MachineSetup' }
+          $outDir = "installer\PowerToysSetupVNext\$env:BuildPlatform\$env:BuildConfiguration\$setupType"
+          $installers = @(Get-ChildItem -Path $outDir -Filter 'PowerToys*Setup*.exe' -ErrorAction SilentlyContinue)
+          if ($scriptExit -ne 0 -or $installers.Count -eq 0) {
+            throw "Installer build failed (script exit $scriptExit); no installer found under $outDir"
+          }
+          $installers | ForEach-Object { Write-Host "Built installer: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
+          "INSTALLER_DIR=$outDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Collect installer and signing certificate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts\installer | Out-Null
+          Get-ChildItem -Path $env:INSTALLER_DIR -Filter 'PowerToys*Setup*.exe' | Copy-Item -Destination artifacts\installer
+          $subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject } | Sort-Object NotAfter -Descending | Select-Object -First 1
+          if ($cert) {
+            Export-Certificate -Cert $cert -FilePath artifacts\installer\PowerToys-SelfSigned-MSIX.cer | Out-Null
+            Write-Host "Exported signing certificate $($cert.Thumbprint)"
+          } else {
+            Write-Warning 'Self-signed MSIX certificate not found; MSIX packages may be unsigned.'
+          }
+          @"
+          PowerToys private build ${{ inputs.version }} from commit ${{ github.sha }}.
+
+          Before running the installer, import PowerToys-SelfSigned-MSIX.cer into both
+          "Trusted Root Certification Authorities" and "Trusted People" of the Local Computer
+          store (elevated PowerShell):
+
+            Import-Certificate -FilePath .\PowerToys-SelfSigned-MSIX.cer -CertStoreLocation Cert:\LocalMachine\Root
+            Import-Certificate -FilePath .\PowerToys-SelfSigned-MSIX.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+
+          That lets the MSIX-based pieces (Command Palette, Explorer context menus) register.
+          The main PowerToys install works without it.
+          "@ | Out-File -FilePath artifacts\installer\README.txt -Encoding utf8
+          Get-ChildItem artifacts\installer | Format-Table Name, Length -AutoSize
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: powertoys-installer-${{ inputs.version }}-x64
+          path: artifacts/installer/**
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-build-logs
+          path: |
+            build.*.errors.log
+            build.*.warnings.log
+            installer/build.*.errors.log
+            installer/build.*.warnings.log
+            tools/**/build.*.errors.log
+          if-no-files-found: ignore
+
+      - name: Upload binary logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-build-binlogs
+          path: |
+            build.*.trace.binlog
+            installer/build.*.trace.binlog
+          if-no-files-found: ignore
