@@ -1,0 +1,181 @@
+name: Build Awake settings change
+
+# Builds the projects touched by the Awake tray-interval change on a hosted
+# Windows runner (Visual Studio 2022, v143 toolset) and runs the Settings UI
+# unit tests. The full PowerToys solution is not built; only the Settings app,
+# the Awake module, their dependencies and the unit tests are compiled.
+
+on:
+  push:
+    branches:
+      - awake-custom-tray-intervals
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to stamp on the binaries. The runner only accepts a Settings app whose file
+          version matches its own, so set this to the installed PowerToys version.
+        required: false
+        default: '0.101.2572'
+
+permissions:
+  contents: read
+
+env:
+  NUGET_PACKAGES: C:\NuGetPackages
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  BuildPlatform: x64
+  BuildConfiguration: Release
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 240
+
+    steps:
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.303
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Locate vcpkg
+        shell: pwsh
+        run: |
+          $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsRoot = & $vswhere -latest -requires Microsoft.VisualStudio.Component.Vcpkg -property installationPath
+          if ([string]::IsNullOrEmpty($vsRoot)) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg deps/vcpkg
+            if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg failed" }
+            & deps/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw "bootstrap-vcpkg failed" }
+            $vcpkgRoot = Resolve-Path deps/vcpkg
+            Write-Host "Using vcpkg from local clone ($vcpkgRoot)"
+          } else {
+            $vcpkgRoot = Join-Path $vsRoot 'VC\vcpkg'
+            Write-Host "Using vcpkg from Visual Studio ($vcpkgRoot)"
+          }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\NuGetPackages
+            packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.config', 'Directory.Packages.props', '**/*.csproj', '**/*.vcxproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          STAMP_VERSION: ${{ inputs.version || '0.101.2572' }}
+        run: |
+          .\tools\build\versionSetting.ps1 -versionNumber $env:STAMP_VERSION -DevEnvironment 'Local' -Channel private -SourceCommit $env:GITHUB_SHA
+          Get-Content src\Version.props
+
+      - name: Restore packages.config packages
+        shell: pwsh
+        run: nuget restore packages.config -ConfigFile nuget.config -PackagesDirectory packages -NonInteractive
+
+      - name: Build Awake module
+        shell: pwsh
+        run: |
+          msbuild src\modules\awake\Awake\Awake.csproj `
+            -restore -m `
+            /p:RestorePackagesConfig=true `
+            /p:Platform=$env:BuildPlatform `
+            /p:Configuration=$env:BuildConfiguration `
+            "/p:SolutionDir=$PWD\" `
+            /bl:logs\build-awake.binlog
+
+      - name: Restore XAML index builder (invoked by the Settings build, not a project reference)
+        shell: pwsh
+        run: |
+          msbuild src\settings-ui\Settings.UI.XamlIndexBuilder\Settings.UI.XamlIndexBuilder.csproj `
+            /t:Restore `
+            "/p:Platform=Any CPU" `
+            /p:Configuration=$env:BuildConfiguration `
+            "/p:SolutionDir=$PWD\"
+
+      - name: Build Settings UI
+        shell: pwsh
+        run: |
+          msbuild src\settings-ui\Settings.UI\PowerToys.Settings.csproj `
+            -restore -m `
+            /p:RestorePackagesConfig=true `
+            /p:Platform=$env:BuildPlatform `
+            /p:Configuration=$env:BuildConfiguration `
+            "/p:SolutionDir=$PWD\" `
+            /bl:logs\build-settings.binlog
+
+      - name: Build and run Settings UI unit tests
+        shell: pwsh
+        run: |
+          msbuild src\settings-ui\Settings.UI.UnitTests\Settings.UI.UnitTests.csproj `
+            -restore -m `
+            "/t:Build;Test" `
+            /p:RestorePackagesConfig=true `
+            /p:Platform=$env:BuildPlatform `
+            /p:Configuration=$env:BuildConfiguration `
+            "/p:SolutionDir=$PWD\" `
+            /bl:logs\build-settings-tests.binlog
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/TestResults/**/*.trx
+          if-no-files-found: ignore
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: logs/*.binlog
+          if-no-files-found: ignore
+
+      - name: Upload Settings and Awake binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-and-awake-x64-release
+          path: |
+            x64/Release/WinUI3Apps/**
+            x64/Release/PowerToys.Awake*
+            x64/Release/PowerToys.AwakeModuleInterface*
+          if-no-files-found: warn
