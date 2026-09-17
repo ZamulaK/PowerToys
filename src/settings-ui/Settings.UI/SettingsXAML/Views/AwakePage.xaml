@@ -137,7 +137,8 @@
                                             Height="36"
                                             VerticalAlignment="Bottom"
                                             Click="DeleteTrayInterval_Click"
-                                            Content="{ui:FontIcon Glyph=&#xE74D;}"
+                                            Content="&#xE74D;"
+                                            FontFamily="{ThemeResource SymbolThemeFontFamily}"
                                             Style="{StaticResource SubtleButtonStyle}"
                                             Tag="{x:Bind}" />
                                     </StackPanel>
