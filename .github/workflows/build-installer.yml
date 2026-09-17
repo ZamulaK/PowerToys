@@ -137,9 +137,14 @@ jobs:
           # on real MSBuild failures, so run it with a non-terminating preference
           # and verify the output afterwards.
           $ErrorActionPreference = 'Continue'
-          $args = @('-Platform', $env:BuildPlatform, '-Configuration', $env:BuildConfiguration, '-PerUser', $env:PER_USER, '-Force')
-          if ($env:CMDPAL_AOT -eq 'true') { $args += '-EnableCmdPalAOT' }
-          & .\tools\build\build-installer.ps1 @args
+          $params = @{
+            Platform      = $env:BuildPlatform
+            Configuration = $env:BuildConfiguration
+            PerUser       = $env:PER_USER
+            Force         = $true
+          }
+          if ($env:CMDPAL_AOT -eq 'true') { $params.EnableCmdPalAOT = $true }
+          & .\tools\build\build-installer.ps1 @params
           $scriptExit = $LASTEXITCODE
           $ErrorActionPreference = 'Stop'
 
