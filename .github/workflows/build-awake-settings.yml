@@ -10,6 +10,13 @@ on:
     branches:
       - awake-custom-tray-intervals
   workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to stamp on the binaries. The runner only accepts a Settings app whose file
+          version matches its own, so set this to the installed PowerToys version.
+        required: false
+        default: '0.101.2572'
 
 permissions:
   contents: read
@@ -89,6 +96,14 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          STAMP_VERSION: ${{ inputs.version || '0.101.2572' }}
+        run: |
+          .\tools\build\versionSetting.ps1 -versionNumber $env:STAMP_VERSION -DevEnvironment 'Local' -Channel private -SourceCommit $env:GITHUB_SHA
+          Get-Content src\Version.props
 
       - name: Restore packages.config packages
         shell: pwsh
