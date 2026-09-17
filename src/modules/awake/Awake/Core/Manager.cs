@@ -68,6 +68,9 @@ namespace Awake.Core
         private static CancellationTokenSource _monitorTokenSource;
         private static IDisposable? _timerSubscription;
 
+        // Length of the timed keep-awake currently counting down, in seconds. Zero when no timed keep-awake is running.
+        private static uint _activeTimedSeconds;
+
         static Manager()
         {
             _monitorTokenSource = new CancellationTokenSource();
@@ -195,6 +198,7 @@ namespace Awake.Core
             // _stateLock to avoid holding the lock across Dispose (called from timer callbacks).
             _timerSubscription?.Dispose();
             _timerSubscription = null;
+            _activeTimedSeconds = 0;
 
             Logger.LogInfo("Timer subscription disposed.");
         }
@@ -345,9 +349,15 @@ namespace Awake.Core
                 _ => HandleTimerCompletion("expirable"));
         }
 
-        internal static void SetTimedKeepAwake(uint seconds, bool keepDisplayOn = true, [CallerMemberName] string callerName = "")
+        internal static void SetTimedKeepAwake(uint seconds, bool keepDisplayOn = true, bool preserveRunningTimer = false, [CallerMemberName] string callerName = "")
         {
             Logger.LogInfo($"Timed keep-awake invoked by {callerName}. Expected runtime: {seconds} seconds with display on setting set to {keepDisplayOn}.");
+
+            if (preserveRunningTimer && TryUpdateRunningTimedKeepAwake(seconds, keepDisplayOn))
+            {
+                return;
+            }
+
             PowerToysTelemetry.Log.WriteEvent(new Telemetry.AwakeTimedKeepAwakeEvent());
 
             CancelExistingThread();
@@ -395,6 +405,7 @@ namespace Awake.Core
 
                 IsDisplayOn = keepDisplayOn;
                 CurrentOperatingMode = AwakeMode.TIMED;
+                _activeTimedSeconds = seconds;
             }
 
             SetModeShellIcon();
@@ -416,6 +427,39 @@ namespace Awake.Core
                             TrayIconAction.Update);
                     },
                     () => HandleTimerCompletion("timed"));
+        }
+
+        /// <summary>
+        /// When a timed keep-awake with the same length is already counting down, keeps that countdown
+        /// instead of restarting it. Settings-file writes for unrelated changes (tray interval list, display
+        /// toggle) re-apply the current mode, and users do not expect those to reset the timer. A changed
+        /// display preference is applied in place.
+        /// </summary>
+        /// <returns>True when the running countdown was kept and nothing else needs to happen.</returns>
+        private static bool TryUpdateRunningTimedKeepAwake(uint seconds, bool keepDisplayOn)
+        {
+            bool displayChanged;
+
+            lock (StateLock)
+            {
+                if (CurrentOperatingMode != AwakeMode.TIMED || _timerSubscription == null || _activeTimedSeconds != seconds)
+                {
+                    return false;
+                }
+
+                displayChanged = IsDisplayOn != keepDisplayOn;
+                if (displayChanged)
+                {
+                    IsDisplayOn = keepDisplayOn;
+                    _stateQueue.Add(ComputeAwakeState(keepDisplayOn));
+                }
+            }
+
+            Logger.LogInfo(displayChanged
+                ? $"Timed keep-awake of {seconds} seconds already running; applied display setting {keepDisplayOn} without restarting the timer."
+                : $"Timed keep-awake of {seconds} seconds already running; leaving the timer untouched.");
+
+            return true;
         }
 
         /// <summary>

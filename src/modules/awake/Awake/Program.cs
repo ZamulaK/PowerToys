@@ -561,7 +561,7 @@ namespace Awake
 
                     case AwakeMode.TIMED:
                         uint computedTime = (settings.Properties.IntervalHours * 3600) + (settings.Properties.IntervalMinutes * 60);
-                        Manager.SetTimedKeepAwake(computedTime, settings.Properties.KeepDisplayOn);
+                        Manager.SetTimedKeepAwake(computedTime, settings.Properties.KeepDisplayOn, preserveRunningTimer: true);
                         break;
 
                     case AwakeMode.EXPIRABLE:
