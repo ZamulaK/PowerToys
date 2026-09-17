@@ -426,14 +426,16 @@ namespace Awake.Core
 
         internal static void SetTray(AwakeSettings settings, bool startedFromPowerToys)
         {
+            uint selectedIntervalSeconds = settings.Properties.Mode == AwakeMode.TIMED
+                ? (settings.Properties.IntervalHours * 3600) + (settings.Properties.IntervalMinutes * 60)
+                : 0;
+
             SetTray(
                 settings.Properties.KeepDisplayOn,
                 settings.Properties.Mode,
                 settings.Properties.CustomTrayTimes,
                 startedFromPowerToys,
-                selectedIntervalSeconds: settings.Properties.Mode == AwakeMode.TIMED
-                    ? (settings.Properties.IntervalHours * 3600) + (settings.Properties.IntervalMinutes * 60)
-                    : 0);
+                selectedIntervalSeconds);
         }
 
         public static void SetTray(bool keepDisplayOn, AwakeMode mode, Dictionary<string, uint> trayTimeShortcuts, bool startedFromPowerToys, uint selectedIntervalSeconds = 0)
