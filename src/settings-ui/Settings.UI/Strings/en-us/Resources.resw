@@ -2589,7 +2589,7 @@ From there, simply click on one of the supported files in the File Explorer and 
     <value>Reset to defaults</value>
   </data>
   <data name="Awake_ResetTrayIntervalsButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
-    <value>Reset the tray menu intervals to 30 minutes, 1 hour and 2 hours</value>
+    <value>Reset the tray menu intervals to 30 minutes, 1 hour, 2, 4, 6, 8, 10 and 12 hours</value>
   </data>
   <data name="Awake_DeleteTrayIntervalButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
     <value>Delete interval</value>

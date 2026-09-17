@@ -28,6 +28,11 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
             (0, 30),
             (1, 0),
             (2, 0),
+            (4, 0),
+            (6, 0),
+            (8, 0),
+            (10, 0),
+            (12, 0),
         ];
 
         public AwakeViewModel()
@@ -292,7 +297,7 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
         }
 
         /// <summary>
-        /// Restores the built-in 30 minutes / 1 hour / 2 hours list.
+        /// Restores the built-in list (30 minutes, 1 hour, 2, 4, 6, 8, 10 and 12 hours).
         /// </summary>
         public void ResetTrayIntervals()
         {

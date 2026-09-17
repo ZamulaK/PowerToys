@@ -512,6 +512,11 @@ namespace Awake.Core
                 { string.Format(CultureInfo.InvariantCulture, AwakeMinutes, 30), 1800 },
                 { string.Format(CultureInfo.InvariantCulture, AwakeHour, 1), 3600 },
                 { string.Format(CultureInfo.InvariantCulture, AwakeHours, 2), 7200 },
+                { string.Format(CultureInfo.InvariantCulture, AwakeHours, 4), 14400 },
+                { string.Format(CultureInfo.InvariantCulture, AwakeHours, 6), 21600 },
+                { string.Format(CultureInfo.InvariantCulture, AwakeHours, 8), 28800 },
+                { string.Format(CultureInfo.InvariantCulture, AwakeHours, 10), 36000 },
+                { string.Format(CultureInfo.InvariantCulture, AwakeHours, 12), 43200 },
             };
             return optionsList;
         }

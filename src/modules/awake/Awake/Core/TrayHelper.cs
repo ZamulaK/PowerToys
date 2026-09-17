@@ -430,10 +430,13 @@ namespace Awake.Core
                 settings.Properties.KeepDisplayOn,
                 settings.Properties.Mode,
                 settings.Properties.CustomTrayTimes,
-                startedFromPowerToys);
+                startedFromPowerToys,
+                selectedIntervalSeconds: settings.Properties.Mode == AwakeMode.TIMED
+                    ? (settings.Properties.IntervalHours * 3600) + (settings.Properties.IntervalMinutes * 60)
+                    : 0);
         }
 
-        public static void SetTray(bool keepDisplayOn, AwakeMode mode, Dictionary<string, uint> trayTimeShortcuts, bool startedFromPowerToys)
+        public static void SetTray(bool keepDisplayOn, AwakeMode mode, Dictionary<string, uint> trayTimeShortcuts, bool startedFromPowerToys, uint selectedIntervalSeconds = 0)
         {
             ClearExistingTrayMenu();
             CreateNewTrayMenu(startedFromPowerToys, keepDisplayOn, mode);
@@ -441,7 +444,7 @@ namespace Awake.Core
             InsertAwakeModeMenuItems(mode);
 
             EnsureDefaultTrayTimeShortcuts(trayTimeShortcuts);
-            CreateAwakeTimeSubMenu(trayTimeShortcuts, mode == AwakeMode.TIMED);
+            CreateAwakeTimeSubMenu(trayTimeShortcuts, mode == AwakeMode.TIMED, selectedIntervalSeconds);
         }
 
         private static void ClearExistingTrayMenu()
@@ -497,13 +500,16 @@ namespace Awake.Core
             }
         }
 
-        private static void CreateAwakeTimeSubMenu(Dictionary<string, uint> trayTimeShortcuts, bool isChecked = false)
+        private static void CreateAwakeTimeSubMenu(Dictionary<string, uint> trayTimeShortcuts, bool isChecked = false, uint selectedIntervalSeconds = 0)
         {
             nint awakeTimeMenu = Bridge.CreatePopupMenu();
             int i = 0;
             foreach (var shortcut in trayTimeShortcuts)
             {
-                Bridge.InsertMenu(awakeTimeMenu, (uint)i, Native.Constants.MF_BYPOSITION | Native.Constants.MF_STRING, (uint)TrayCommands.TC_TIME + (uint)i, shortcut.Key);
+                // Mark the entry that matches the interval currently in effect so the user can see which one is running.
+                bool isSelected = isChecked && selectedIntervalSeconds != 0 && shortcut.Value == selectedIntervalSeconds;
+                uint itemState = Native.Constants.MF_BYPOSITION | Native.Constants.MF_STRING | (isSelected ? Native.Constants.MF_CHECKED : Native.Constants.MF_UNCHECKED);
+                Bridge.InsertMenu(awakeTimeMenu, (uint)i, itemState, (uint)TrayCommands.TC_TIME + (uint)i, shortcut.Key);
                 i++;
             }
 
