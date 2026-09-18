@@ -33,6 +33,11 @@ on:
         type: boolean
         required: false
         default: false
+      build_tests:
+        description: Also compile the test projects (about a third of the solution; the installer does not need them).
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -191,7 +196,12 @@ jobs:
         env:
           PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
           CMDPAL_AOT: ${{ inputs.enable_cmdpal_aot && 'true' || 'false' }}
+          # MSBuild exposes environment variables as properties. Directory.Build.props turns every
+          # test project into a no-op when BuildTests is false, which is how upstream's release
+          # pipeline builds too. build-installer.ps1 has no parameter for it, hence the variable.
+          BuildTests: ${{ inputs.build_tests && 'true' || 'false' }}
         run: |
+          Write-Host "BuildTests=$env:BuildTests"
           # The repo script uses Write-Error for a non-fatal step (the private
           # Terminal.Versioning feed is unreachable from here) and exits explicitly
           # on real MSBuild failures, so run it with a non-terminating preference
