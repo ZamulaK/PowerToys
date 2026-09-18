@@ -157,6 +157,35 @@ jobs:
           $content -replace $pattern, '# CI: CurrentUser\Root import skipped; it opens a confirmation dialog that never returns on a hosted runner.' | Set-Content $certScript -NoNewline
           Write-Host "Patched $certScript"
 
+      - name: Import the persistent signing certificate (optional)
+        shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          # cert-management.ps1 reuses any certificate with the expected subject that already
+          # sits in CurrentUser\My. Importing a fixed certificate from repository secrets here
+          # means every installer is signed by the same certificate, so the target machine only
+          # has to trust it once. Without the secrets a throwaway certificate is created as before.
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_BASE64)) {
+            Write-Host 'SIGNING_PFX_BASE64 secret not set; a throwaway certificate will be created for this build.'
+            return
+          }
+          $subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+          if ($cert.Subject -ne $subject) { throw "Signing certificate subject is '$($cert.Subject)'; expected '$subject'." }
+          if (-not $cert.HasPrivateKey) { throw 'Signing certificate was imported without its private key.' }
+          if ($cert.NotAfter -lt (Get-Date).AddDays(1)) { throw "Signing certificate expired on $($cert.NotAfter)." }
+          Write-Host "Using persistent signing certificate $($cert.Thumbprint) (valid until $($cert.NotAfter.ToString('yyyy-MM-dd')))"
+          "PERSISTENT_SIGNING_CERT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Build solution and tools (first pass)
         shell: pwsh
         env:
@@ -243,8 +272,14 @@ jobs:
           } else {
             Write-Warning 'Self-signed MSIX certificate not found; MSIX packages may be unsigned.'
           }
+          $certNote = if ($env:PERSISTENT_SIGNING_CERT) {
+            "Signed with the persistent certificate $($env:PERSISTENT_SIGNING_CERT) from the repository secrets. If this machine already trusts that certificate, skip the import below."
+          } else {
+            "Signed with a throwaway certificate ($($cert.Thumbprint)) created for this build only, so the import below is required for this build."
+          }
           @"
           PowerToys private build ${{ inputs.version }} from commit ${{ github.sha }}.
+          $certNote
 
           Before running the installer, import PowerToys-SelfSigned-MSIX.cer into both
           "Trusted Root Certification Authorities" and "Trusted People" of the Local Computer
@@ -259,8 +294,9 @@ jobs:
           the MSIX-based pieces (Command Palette, Explorer context menus).
 
           Security note: while this certificate is trusted, anything signed with its private key
-          is accepted as "Microsoft Corporation" on this machine. The key only ever existed on the
-          GitHub-hosted runner that produced this build and was discarded with it.
+          is accepted as "Microsoft Corporation" on this machine. A throwaway certificate's key only
+          ever existed on the GitHub-hosted runner and was discarded with it; the persistent
+          certificate's key lives in the repository's encrypted secrets and on the PC that created it.
           "@ | Out-File -FilePath artifacts\installer\README.txt -Encoding utf8
           Get-ChildItem artifacts\installer | Format-Table Name, Length -AutoSize
 
