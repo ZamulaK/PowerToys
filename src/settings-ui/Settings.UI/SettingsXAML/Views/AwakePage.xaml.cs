@@ -11,6 +11,8 @@ using Microsoft.PowerToys.Settings.UI.Library;
 using Microsoft.PowerToys.Settings.UI.Library.Interfaces;
 using Microsoft.PowerToys.Settings.UI.ViewModels;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using PowerToys.GPOWrapper;
 
 namespace Microsoft.PowerToys.Settings.UI.Views
@@ -183,6 +185,24 @@ namespace Microsoft.PowerToys.Settings.UI.Views
         {
             UpdateEnabledState(_generalSettingsRepository.SettingsConfig.Enabled.Awake);
             ViewModel.RefreshEnabledState();
+        }
+
+        private void AddTrayInterval_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.AddTrayInterval();
+        }
+
+        private void DeleteTrayInterval_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.Tag is AwakeTrayInterval interval)
+            {
+                ViewModel.RemoveTrayInterval(interval);
+            }
+        }
+
+        private void ResetTrayIntervals_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.ResetTrayIntervals();
         }
     }
 }

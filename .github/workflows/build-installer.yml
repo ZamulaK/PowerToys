@@ -2,7 +2,7 @@ name: Build full installer (manual)
 
 # Builds the complete PowerToys solution and produces the installer, mirroring
 # tools\build\build-installer.ps1, on a hosted Windows runner. This is a long
-# job (expect two to three hours) so it only runs when started by hand.
+# job (roughly an hour on a hosted runner) so it only runs when started by hand.
 #
 # Notes:
 # - MSIX packages (CmdPal, context-menu sparse packages) are signed with a
@@ -126,7 +126,38 @@ jobs:
         shell: pwsh
         run: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}} | Format-Table -AutoSize
 
-      - name: Build solution, tools and installer
+      - name: Use the v143 toolset for projects that hard-code v145
+        shell: pwsh
+        run: |
+          # The hosted runner has Visual Studio 2022 (MSVC 14.4x). Two projects pin the
+          # VS 2026 toolset explicitly instead of inheriting Cpp.Build.props, which already
+          # selects v143 on VS 2022. Rewrite them for this build only.
+          $pinned = @(
+            'src\modules\ZoomIt\ZoomItBreak\ZoomItBreak.vcxproj',
+            'src\modules\MouseUtils\CursorWrap\CursorWrapTests\CursorLog\CursorLog\CursorLog.vcxproj'
+          )
+          foreach ($file in $pinned) {
+            if (Test-Path $file) {
+              (Get-Content $file -Raw) -replace '<PlatformToolset>v145</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>' | Set-Content $file -NoNewline
+              Write-Host "Patched $file"
+            }
+          }
+
+      - name: Skip the CurrentUser\Root certificate import (hangs on a hosted runner)
+        shell: pwsh
+        run: |
+          # cert-management.ps1 imports the self-signed MSIX certificate into CurrentUser\Root.
+          # Windows guards that store with a confirmation dialog, which nobody can click on a
+          # hosted runner, so the previous run sat there until the six-hour timeout.
+          # LocalMachine\Root (imported without a prompt) is enough for the signature chain.
+          $certScript = 'tools\build\cert-management.ps1'
+          $pattern = 'if \(-not \(ImportAndVerifyCertificate -cerPath \$cerPath -storePath "Cert:\\CurrentUser\\Root"\)\) \{ return \$null \}'
+          $content = Get-Content $certScript -Raw
+          if ($content -notmatch $pattern) { throw "Expected CurrentUser\Root import line not found in $certScript; script changed upstream." }
+          $content -replace $pattern, '# CI: CurrentUser\Root import skipped; it opens a confirmation dialog that never returns on a hosted runner.' | Set-Content $certScript -NoNewline
+          Write-Host "Patched $certScript"
+
+      - name: Build solution and tools (first pass)
         shell: pwsh
         env:
           PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
@@ -137,9 +168,56 @@ jobs:
           # on real MSBuild failures, so run it with a non-terminating preference
           # and verify the output afterwards.
           $ErrorActionPreference = 'Continue'
-          $args = @('-Platform', $env:BuildPlatform, '-Configuration', $env:BuildConfiguration, '-PerUser', $env:PER_USER, '-Force')
-          if ($env:CMDPAL_AOT -eq 'true') { $args += '-EnableCmdPalAOT' }
-          & .\tools\build\build-installer.ps1 @args
+          $params = @{
+            Platform      = $env:BuildPlatform
+            Configuration = $env:BuildConfiguration
+            PerUser       = $env:PER_USER
+            Force         = $true
+          }
+          if ($env:CMDPAL_AOT -eq 'true') { $params.EnableCmdPalAOT = $true }
+          & .\tools\build\build-installer.ps1 @params
+          $scriptExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          if ($scriptExit -ne 0) {
+            throw "Solution/installer build failed (script exit $scriptExit)"
+          }
+
+      - name: Sign the Settings and Quick Access executables
+        shell: pwsh
+        run: |
+          # In Release builds the runner only talks to a PowerToys.Settings.exe (and
+          # PowerToys.QuickAccess.exe) whose Authenticode signer is named "Microsoft
+          # Corporation" and chains to a certificate in the machine root store
+          # (src/common/interop/pipe_caller_auth.cpp). The installer script already
+          # created such a self-signed certificate for the MSIX packages; reuse it so the
+          # shipped Settings app is accepted once the .cer is trusted on the target machine.
+          $subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject } | Sort-Object NotAfter -Descending | Select-Object -First 1
+          if (-not $cert) { throw 'Self-signed certificate from the MSIX signing step was not found.' }
+          $targets = @(
+            "$env:BuildPlatform\$env:BuildConfiguration\WinUI3Apps\PowerToys.Settings.exe",
+            "$env:BuildPlatform\$env:BuildConfiguration\WinUI3Apps\PowerToys.QuickAccess.exe"
+          ) | Where-Object { Test-Path $_ }
+          foreach ($target in $targets) {
+            $result = Set-AuthenticodeSignature -FilePath $target -Certificate $cert -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+            Write-Host "$target : $($result.Status) $($result.StatusMessage)"
+            if ($result.Status -ne 'Valid') { throw "Signing $target failed: $($result.StatusMessage)" }
+          }
+
+      - name: Package the installer (second pass with signed executables)
+        shell: pwsh
+        env:
+          PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $params = @{
+            Platform      = $env:BuildPlatform
+            Configuration = $env:BuildConfiguration
+            PerUser       = $env:PER_USER
+            Force         = $true
+            SkipBuild     = $true
+          }
+          & .\tools\build\build-installer.ps1 @params
           $scriptExit = $LASTEXITCODE
           $ErrorActionPreference = 'Stop'
 
@@ -147,7 +225,7 @@ jobs:
           $outDir = "installer\PowerToysSetupVNext\$env:BuildPlatform\$env:BuildConfiguration\$setupType"
           $installers = @(Get-ChildItem -Path $outDir -Filter 'PowerToys*Setup*.exe' -ErrorAction SilentlyContinue)
           if ($scriptExit -ne 0 -or $installers.Count -eq 0) {
-            throw "Installer build failed (script exit $scriptExit); no installer found under $outDir"
+            throw "Installer packaging failed (script exit $scriptExit); no installer found under $outDir"
           }
           $installers | ForEach-Object { Write-Host "Built installer: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
           "INSTALLER_DIR=$outDir" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -175,8 +253,14 @@ jobs:
             Import-Certificate -FilePath .\PowerToys-SelfSigned-MSIX.cer -CertStoreLocation Cert:\LocalMachine\Root
             Import-Certificate -FilePath .\PowerToys-SelfSigned-MSIX.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
 
-          That lets the MSIX-based pieces (Command Palette, Explorer context menus) register.
-          The main PowerToys install works without it.
+          The runner refuses to talk to a Settings app that is not signed by a "Microsoft
+          Corporation" certificate chained to the machine root store, so without this import the
+          Settings app will open but none of its changes will be saved. The same certificate signs
+          the MSIX-based pieces (Command Palette, Explorer context menus).
+
+          Security note: while this certificate is trusted, anything signed with its private key
+          is accepted as "Microsoft Corporation" on this machine. The key only ever existed on the
+          GitHub-hosted runner that produced this build and was discarded with it.
           "@ | Out-File -FilePath artifacts\installer\README.txt -Encoding utf8
           Get-ChildItem artifacts\installer | Format-Table Name, Length -AutoSize
 
