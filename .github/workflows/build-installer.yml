@@ -191,34 +191,32 @@ jobs:
           Write-Host "Using persistent signing certificate $($cert.Thumbprint) (valid until $($cert.NotAfter.ToString('yyyy-MM-dd')))"
           "PERSISTENT_SIGNING_CERT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Build solution and tools (first pass)
+      - name: Build solution and tools
         shell: pwsh
         env:
-          PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
           CMDPAL_AOT: ${{ inputs.enable_cmdpal_aot && 'true' || 'false' }}
           # MSBuild exposes environment variables as properties. Directory.Build.props turns every
           # test project into a no-op when BuildTests is false, which is how upstream's release
-          # pipeline builds too. build-installer.ps1 has no parameter for it, hence the variable.
+          # pipeline builds too.
           BuildTests: ${{ inputs.build_tests && 'true' || 'false' }}
         run: |
+          # The Settings and Quick Access executables must be signed after they are built and
+          # before the installer packages them. build-installer.ps1 does build and packaging in
+          # one go, so this step performs only its build half, using the repo's own helpers with
+          # the same arguments: the solution, then the two helper tools its -SkipBuild switch
+          # would otherwise leave out. The script itself runs later for everything else.
           Write-Host "BuildTests=$env:BuildTests"
-          # The repo script uses Write-Error for a non-fatal step (the private
-          # Terminal.Versioning feed is unreachable from here) and exits explicitly
-          # on real MSBuild failures, so run it with a non-terminating preference
-          # and verify the output afterwards.
-          $ErrorActionPreference = 'Continue'
-          $params = @{
-            Platform      = $env:BuildPlatform
-            Configuration = $env:BuildConfiguration
-            PerUser       = $env:PER_USER
-            Force         = $true
-          }
-          if ($env:CMDPAL_AOT -eq 'true') { $params.EnableCmdPalAOT = $true }
-          & .\tools\build\build-installer.ps1 @params
-          $scriptExit = $LASTEXITCODE
-          $ErrorActionPreference = 'Stop'
-          if ($scriptExit -ne 0) {
-            throw "Solution/installer build failed (script exit $scriptExit)"
+          $global:RepoRoot = (Get-Location).Path
+          $script:RepoRoot = $global:RepoRoot
+          . .\tools\build\build-common.ps1
+          if (-not (Ensure-VsDevEnvironment)) { throw 'Could not initialize the Visual Studio developer environment.' }
+
+          $commonArgs = '/p:CIBuild=true /p:IsPipeline=true'
+          if ($env:CMDPAL_AOT -eq 'true') { $commonArgs += ' /p:EnableCmdPalAOT=true' }
+
+          foreach ($solution in 'PowerToys.slnx', 'tools\BugReportTool\BugReportTool.sln', 'tools\StylesReportTool\StylesReportTool.sln') {
+            RestoreThenBuild $solution $commonArgs $env:BuildPlatform $env:BuildConfiguration
+            if ($LASTEXITCODE -ne 0) { throw "Build failed: $solution (exit $LASTEXITCODE)" }
           }
 
       - name: Sign the Settings and Quick Access executables
@@ -227,12 +225,13 @@ jobs:
           # In Release builds the runner only talks to a PowerToys.Settings.exe (and
           # PowerToys.QuickAccess.exe) whose Authenticode signer is named "Microsoft
           # Corporation" and chains to a certificate in the machine root store
-          # (src/common/interop/pipe_caller_auth.cpp). The installer script already
-          # created such a self-signed certificate for the MSIX packages; reuse it so the
-          # shipped Settings app is accepted once the .cer is trusted on the target machine.
+          # (src/common/interop/pipe_caller_auth.cpp). Use the same certificate the repo's
+          # script will use for the MSIX packages: EnsureCertificate returns the persistent one
+          # imported earlier, or creates and trusts a throwaway one when no secrets are set.
           $subject = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
-          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $subject } | Sort-Object NotAfter -Descending | Select-Object -First 1
-          if (-not $cert) { throw 'Self-signed certificate from the MSIX signing step was not found.' }
+          . .\tools\build\cert-management.ps1
+          $cert = EnsureCertificate -certSubject $subject
+          if (-not $cert) { throw 'Could not find or create the signing certificate.' }
           $targets = @(
             "$env:BuildPlatform\$env:BuildConfiguration\WinUI3Apps\PowerToys.Settings.exe",
             "$env:BuildPlatform\$env:BuildConfiguration\WinUI3Apps\PowerToys.QuickAccess.exe"
@@ -243,11 +242,16 @@ jobs:
             if ($result.Status -ne 'Valid') { throw "Signing $target failed: $($result.StatusMessage)" }
           }
 
-      - name: Package the installer (second pass with signed executables)
+      - name: Sign MSIX packages and build the installer
         shell: pwsh
         env:
           PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
         run: |
+          # -SkipBuild makes the repo script do everything except the builds done above:
+          # MSIX signing, DSC manifests, the CLI shim checks and the installer itself.
+          # It uses Write-Error for a non-fatal step (the private Terminal.Versioning feed is
+          # unreachable from here) and exits explicitly on real MSBuild failures, so run it with
+          # a non-terminating preference and verify the output afterwards.
           $ErrorActionPreference = 'Continue'
           $params = @{
             Platform      = $env:BuildPlatform
