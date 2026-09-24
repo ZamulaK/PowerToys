@@ -21,10 +21,16 @@
         <util:RegistrySearch Variable="HasWebView2PerUser" Root="HKCU" Key="Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Result="exists" />
 
         <?if $(var.PerUser) = "true" ?>
+            <Variable Name="DefaultInstallFolder" Type="formatted" Value="[LocalAppDataFolder]PowerToys" />
             <Variable Name="InstallFolder" Type="formatted" Value="[LocalAppDataFolder]PowerToys" bal:Overridable="yes" />
         <?else?>
+            <Variable Name="DefaultInstallFolder" Type="formatted" Value="$(var.PlatformProgramFiles)PowerToys" />
             <Variable Name="InstallFolder" Type="formatted" Value="$(var.PlatformProgramFiles)PowerToys" bal:Overridable="yes" />
         <?endif?>
+
+        <!-- Default the install folder to the current installation's folder (written by Core.wxs), unless InstallFolder was passed on the command line -->
+        <util:RegistrySearch Id="SearchPreviousInstallFolder" Variable="PreviousInstallFolder" Root="$(var.RegistryScope)" Key="Software\Classes\powertoys" Value="InstallFolder" Result="value" Bitness="always64" />
+        <SetVariable Id="SetInstallFolderToPrevious" Variable="InstallFolder" Value="[PreviousInstallFolder]" Type="formatted" After="SearchPreviousInstallFolder" Condition="PreviousInstallFolder AND InstallFolder = DefaultInstallFolder" />
 
         <Log Disable="no" Prefix="powertoys-bootstrapper-msi-$(var.Version)" Extension=".log" />
 

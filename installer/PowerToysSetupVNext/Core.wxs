@@ -7,6 +7,8 @@
       <Component Id="powertoys_per_machine_comp" Bitness="always64">
         <RegistryKey Root="$(var.RegistryScope)" Key="Software\Classes\powertoys">
           <RegistryValue Type="string" Name="InstallScope" Value="$(var.InstallScope)" />
+          <!-- Read back by the bootstrapper so the next install defaults to this folder -->
+          <RegistryValue Type="string" Name="InstallFolder" Value="[INSTALLFOLDER]" />
         </RegistryKey>
       </Component>
       <?if $(var.PerUser) = "true" ?>
