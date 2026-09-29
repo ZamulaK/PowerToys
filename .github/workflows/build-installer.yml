@@ -18,11 +18,11 @@ on:
     inputs:
       version:
         description: >-
-          Version to stamp on the build (w.x.y). Use a version higher than the installed
-          one so the installer performs an upgrade; the runner also requires the Settings
-          app version to match its own, which a single build guarantees.
-        required: true
-        default: '0.101.2600'
+          Version to stamp on the build (w.x.y). Leave blank to use one above both the latest
+          upstream preview release and the last installer this repository built. The version
+          must be higher than the installed one so the installer performs an upgrade.
+        required: false
+        default: ''
       per_user:
         description: Build the per-user installer instead of the machine-wide one.
         type: boolean
@@ -41,6 +41,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # list earlier installer artifacts when picking the version
 
 env:
   NUGET_PACKAGES: D:\NuGetPackages
@@ -119,10 +120,44 @@ jobs:
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
-      - name: Stamp build version
+      - name: Resolve build version
         shell: pwsh
         env:
-          STAMP_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          # An explicit version wins. Otherwise take the next build number after both the latest
+          # upstream preview release (so the build sorts above it) and the last installer built
+          # here (so rebuilding against the same upstream release still upgrades).
+          if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_VERSION)) {
+            $version = $env:REQUESTED_VERSION.Trim()
+            if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$version' is not in w.x.y form." }
+            Write-Host "Using requested version $version"
+          } else {
+            $candidates = @()
+            $upstream = gh api 'repos/microsoft/PowerToys/releases?per_page=30' --jq '.[].tag_name'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not list upstream releases.' }
+            $candidates += $upstream | Where-Object { $_ -match '^v?(\d+\.\d+\.\d+)' } | ForEach-Object { [version]$Matches[1] }
+            $latestUpstream = $candidates | Sort-Object -Descending | Select-Object -First 1
+            Write-Host "Latest upstream release: $latestUpstream"
+
+            $built = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts?per_page=100" --paginate --jq '.artifacts[].name'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not list earlier artifacts.' }
+            $builtVersions = @($built | Where-Object { $_ -match '^powertoys-installer-(\d+\.\d+\.\d+)-x64$' } | ForEach-Object { [version]$Matches[1] })
+            $lastBuilt = $builtVersions | Sort-Object -Descending | Select-Object -First 1
+            Write-Host "Last installer built here: $(if ($lastBuilt) { $lastBuilt } else { 'none found' })"
+            $candidates += $builtVersions
+
+            $highest = $candidates | Sort-Object -Descending | Select-Object -First 1
+            if (-not $highest) { throw 'No upstream or earlier version found; pass a version explicitly.' }
+            $version = "$($highest.Major).$($highest.Minor).$($highest.Build + 1)"
+            Write-Host "Using next version $version"
+          }
+          "STAMP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "### Installer version: $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Stamp build version
+        shell: pwsh
         run: |
           .\tools\build\versionSetting.ps1 -versionNumber $env:STAMP_VERSION -DevEnvironment 'Local' -Channel private -SourceCommit $env:GITHUB_SHA
           Get-Content src\Version.props
@@ -292,7 +327,7 @@ jobs:
             "Signed with a throwaway certificate ($($cert.Thumbprint)) created for this build only, so the import below is required for this build."
           }
           @"
-          PowerToys private build ${{ inputs.version }} from commit ${{ github.sha }}.
+          PowerToys private build ${{ env.STAMP_VERSION }} from commit ${{ github.sha }}.
           $certNote
 
           Before running the installer, import PowerToys-SelfSigned-MSIX.cer into both
@@ -317,7 +352,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: powertoys-installer-${{ inputs.version }}-x64
+          name: powertoys-installer-${{ env.STAMP_VERSION }}-x64
           path: artifacts/installer/**
           if-no-files-found: error
 
