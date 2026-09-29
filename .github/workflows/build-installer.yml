@@ -1,4 +1,4 @@
-name: Build full installer (manual)
+name: _Build Full Installer (Manual)
 
 # Builds the complete PowerToys solution and produces the installer, mirroring
 # tools\build\build-installer.ps1, on a hosted Windows runner. This is a long
