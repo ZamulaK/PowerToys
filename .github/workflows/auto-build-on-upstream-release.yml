@@ -1,0 +1,100 @@
+name: _Auto Build on Upstream Release
+
+# Checks microsoft/PowerToys for a new release or preview. When one appears, merges upstream
+# main into this fork's main (the same merge as GitHub's "Update branch") and starts the
+# installer workflow with a blank version, so it stamps one above the new release.
+#
+# Each upstream release is built once: a tag auto-build/<upstream tag> is created when the
+# build is started. Delete that tag to have the next check build the release again.
+#
+# Token: GITHUB_TOKEN can merge and start the build, but GitHub refuses to let it push
+# commits that change files under .github/workflows, which upstream does now and then.
+# Add a fine-grained personal access token for this repository with "Contents" and
+# "Workflows" read/write as the SYNC_TOKEN secret to cover those merges too.
+
+on:
+  schedule:
+    - cron: '17 */3 * * *' # every three hours
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if the latest upstream release was already built.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write # merge upstream into main, create the auto-build tag
+  actions: write # start the installer workflow
+
+concurrency:
+  group: auto-build-on-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for a new upstream release and start the installer build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          FORCE: ${{ inputs.force && 'true' || 'false' }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+
+          # Latest upstream release or preview, by version number.
+          $tags = gh api 'repos/microsoft/PowerToys/releases?per_page=30' --jq '.[] | select(.draft | not) | .tag_name'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list upstream releases.' }
+          $latest = $tags | Where-Object { $_ -match '^v?(\d+\.\d+\.\d+)' } |
+            Sort-Object { [version]([regex]::Match($_, '\d+\.\d+\.\d+').Value) } -Descending |
+            Select-Object -First 1
+          if (-not $latest) { throw 'No upstream release found.' }
+          Write-Host "Latest upstream release: $latest"
+          $marker = "auto-build/$latest"
+
+          gh api "repos/$repo/git/ref/tags/$marker" --silent 2>$null
+          $markerExists = $LASTEXITCODE -eq 0
+          if ($markerExists -and $env:FORCE -ne 'true') {
+            Write-Host "Already built ($marker exists); nothing to do."
+            "Upstream $latest was already built; nothing to do." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            return
+          }
+
+          # Leave it for the next check if an installer build is already queued or running.
+          $active = gh run list --repo $repo --workflow build-installer.yml --limit 10 --json status --jq '[.[] | select(.status != "completed")] | length'
+          if ([int]$active -gt 0) {
+            Write-Host 'An installer build is already queued or running; checking again next time.'
+            "Upstream $latest is new, but an installer build is already running; will retry on the next check." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            return
+          }
+
+          # Merge upstream main into main (a fast-forward or merge commit, never a reset).
+          $actionsToken = $env:GH_TOKEN
+          if (-not [string]::IsNullOrWhiteSpace($env:SYNC_TOKEN)) { $env:GH_TOKEN = $env:SYNC_TOKEN }
+          $sync = gh api -X POST "repos/$repo/merge-upstream" -f branch=main 2>&1
+          $syncExit = $LASTEXITCODE
+          $env:GH_TOKEN = $actionsToken
+          if ($syncExit -ne 0) {
+            $hint = if ([string]::IsNullOrWhiteSpace($env:SYNC_TOKEN)) {
+              ' If upstream changed .github/workflows, add a SYNC_TOKEN secret (see the comment at the top of this workflow) or click "Update branch" on GitHub, then run this workflow again.'
+            } else { ' A merge conflict needs resolving by hand.' }
+            throw "Merging upstream into main failed: $sync.$hint"
+          }
+          Write-Host "Sync result: $sync"
+
+          $head = gh api "repos/$repo/commits/main" --jq '.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the main branch head.' }
+
+          gh workflow run build-installer.yml --repo $repo --ref main
+          if ($LASTEXITCODE -ne 0) { throw 'Could not start the installer workflow.' }
+
+          if ($markerExists) {
+            gh api -X PATCH "repos/$repo/git/refs/tags/$marker" -f sha=$head -F force=true --silent
+          } else {
+            gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$marker" -f sha=$head --silent
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Build started, but recording $marker failed; the next check may start it again." }
+
+          "Upstream $latest is new: merged upstream into main ($($head.Substring(0,8))) and started the installer build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
