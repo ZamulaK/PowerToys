@@ -40,8 +40,13 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write # tag each built version as installer/v<version>
   actions: read # list earlier installer artifacts when picking the version
+
+# One installer build at a time, so two runs never pick the same version.
+concurrency:
+  group: build-installer
+  cancel-in-progress: false
 
 env:
   NUGET_PACKAGES: D:\NuGetPackages
@@ -128,7 +133,9 @@ jobs:
         run: |
           # An explicit version wins. Otherwise take the next build number after both the latest
           # upstream preview release (so the build sorts above it) and the last installer built
-          # here (so rebuilding against the same upstream release still upgrades).
+          # here (so rebuilding against the same upstream release still upgrades). Built versions
+          # come from the installer/v<version> tags, which outlive deleted runs, and from any
+          # installer artifacts still stored.
           if (-not [string]::IsNullOrWhiteSpace($env:REQUESTED_VERSION)) {
             $version = $env:REQUESTED_VERSION.Trim()
             if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$version' is not in w.x.y form." }
@@ -144,6 +151,9 @@ jobs:
             $built = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts?per_page=100" --paginate --jq '.artifacts[].name'
             if ($LASTEXITCODE -ne 0) { throw 'Could not list earlier artifacts.' }
             $builtVersions = @($built | Where-Object { $_ -match '^powertoys-installer-(\d+\.\d+\.\d+)-x64$' } | ForEach-Object { [version]$Matches[1] })
+            $builtTags = gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/installer/v" --paginate --jq '.[].ref'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not list installer tags.' }
+            $builtVersions += @($builtTags | Where-Object { $_ -match '^refs/tags/installer/v(\d+\.\d+\.\d+)$' } | ForEach-Object { [version]$Matches[1] })
             $lastBuilt = $builtVersions | Sort-Object -Descending | Select-Object -First 1
             Write-Host "Last installer built here: $(if ($lastBuilt) { $lastBuilt } else { 'none found' })"
             $candidates += $builtVersions
@@ -355,6 +365,16 @@ jobs:
           name: powertoys-installer-${{ env.STAMP_VERSION }}-x64
           path: artifacts/installer/**
           if-no-files-found: error
+
+      - name: Tag the built version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Records the version so later runs pick a higher one even after this run is deleted.
+          gh api -X POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/installer/v$env:STAMP_VERSION" -f sha=$env:GITHUB_SHA --silent
+          if ($LASTEXITCODE -ne 0) { Write-Warning "Could not create tag installer/v$env:STAMP_VERSION (it may already exist)." }
+          exit 0
 
       - name: Upload build logs
         if: always()

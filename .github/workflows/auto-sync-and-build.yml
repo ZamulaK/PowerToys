@@ -1,0 +1,83 @@
+name: _Auto Sync and Build
+
+# Every six hours, checks whether microsoft/PowerToys main has commits this fork's main does
+# not. If it does, merges upstream main into main (the same merge as GitHub's "Update branch")
+# and starts the installer workflow with a blank version, so it picks the next version itself.
+# Run it by hand with "force" to build even when there is nothing new upstream.
+#
+# Token: GITHUB_TOKEN can merge and start the build, but GitHub refuses to let it push
+# commits that change files under .github/workflows, which upstream does now and then.
+# The SYNC_TOKEN secret (a fine-grained personal access token for this repository with
+# "Contents" and "Workflows" read/write) is used for the merge when it is set.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *' # every six hours
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if there are no new upstream commits.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write # merge upstream into main
+  actions: write # start the installer workflow
+
+concurrency:
+  group: auto-sync-and-build
+  cancel-in-progress: false
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync with upstream and start the installer build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          FORCE: ${{ inputs.force && 'true' || 'false' }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $owner = $repo.Split('/')[0]
+
+          # Commits on upstream main that this fork's main does not have.
+          $behind = gh api "repos/microsoft/PowerToys/compare/main...$($owner):main" --jq '.behind_by'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compare the fork with upstream.' }
+          Write-Host "Upstream commits not in this fork: $behind"
+
+          if ([int]$behind -eq 0 -and $env:FORCE -ne 'true') {
+            "Up to date with upstream; nothing to build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            return
+          }
+
+          # Leave it for the next check if an installer build is already queued or running.
+          $active = gh run list --repo $repo --workflow build-installer.yml --limit 10 --json status --jq '[.[] | select(.status != "completed")] | length'
+          if ([int]$active -gt 0) {
+            "$behind new upstream commit(s), but an installer build is already running; will retry on the next check." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            return
+          }
+
+          if ([int]$behind -gt 0) {
+            # Merge upstream main into main (a fast-forward or merge commit, never a reset).
+            $actionsToken = $env:GH_TOKEN
+            if (-not [string]::IsNullOrWhiteSpace($env:SYNC_TOKEN)) { $env:GH_TOKEN = $env:SYNC_TOKEN }
+            $sync = gh api -X POST "repos/$repo/merge-upstream" -f branch=main 2>&1
+            $syncExit = $LASTEXITCODE
+            $env:GH_TOKEN = $actionsToken
+            if ($syncExit -ne 0) {
+              $hint = if ([string]::IsNullOrWhiteSpace($env:SYNC_TOKEN)) {
+                ' If upstream changed .github/workflows, add the SYNC_TOKEN secret (see the comment at the top of this workflow) or click "Update branch" on GitHub, then run this workflow again.'
+              } else { ' The SYNC_TOKEN may have expired, or a merge conflict needs resolving by hand.' }
+              throw "Merging upstream into main failed: $sync.$hint"
+            }
+            Write-Host "Sync result: $sync"
+          }
+
+          gh workflow run build-installer.yml --repo $repo --ref main
+          if ($LASTEXITCODE -ne 0) { throw 'Could not start the installer workflow.' }
+
+          $head = gh api "repos/$repo/commits/main" --jq '.sha'
+          "Merged $behind upstream commit(s) into main ($($head.Substring(0,8))) and started the installer build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
