@@ -3,7 +3,8 @@ name: _Auto Sync and Build
 # Every six hours, checks whether microsoft/PowerToys main has commits this fork's main does
 # not. If it does, merges upstream main into main (the same merge as GitHub's "Update branch")
 # and starts the installer workflow with a blank version, so it picks the next version itself.
-# Run it by hand with "force" to build even when there is nothing new upstream.
+# It starts at most one successful build per 24 hours; a failed build is retried at the next
+# check. Run it by hand with "force" to build regardless of new commits or the daily limit.
 #
 # Token: GITHUB_TOKEN can merge and start the build, but GitHub refuses to let it push
 # commits that change files under .github/workflows, which upstream does now and then.
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Build even if there are no new upstream commits.
+        description: Build even if there are no new upstream commits or a build already ran today.
         type: boolean
         required: false
         default: false
@@ -58,6 +59,18 @@ jobs:
           if ([int]$active -gt 0) {
             "$behind new upstream commit(s), but an installer build is already running; will retry on the next check." | Out-File $env:GITHUB_STEP_SUMMARY -Append
             return
+          }
+
+          # At most one successful automatic build per 24 hours. Runs this workflow starts are
+          # attributed to github-actions[bot]; builds started by hand neither count nor are limited.
+          if ($env:FORCE -ne 'true') {
+            $since = (Get-Date).ToUniversalTime().AddHours(-24).ToString('yyyy-MM-ddTHH:mm:ssZ')
+            $recent = gh api "repos/$repo/actions/workflows/build-installer.yml/runs?actor=github-actions%5Bbot%5D&status=success&created=%3E%3D$since" --jq '.total_count'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not list recent installer builds.' }
+            if ([int]$recent -gt 0) {
+              "$behind new upstream commit(s), but an automatic build already succeeded in the last 24 hours; will check again later." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+              return
+            }
           }
 
           if ([int]$behind -gt 0) {
