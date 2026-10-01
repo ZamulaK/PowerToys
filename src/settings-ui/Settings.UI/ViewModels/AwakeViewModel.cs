@@ -401,7 +401,13 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
                 return;
             }
 
-            ModuleSettings.Properties.CustomTrayTimes = BuildTrayTimes(TrayIntervals);
+            // CustomTrayTimes is init-only, so replace its contents in place.
+            Dictionary<string, uint> trayTimes = ModuleSettings.Properties.CustomTrayTimes;
+            trayTimes.Clear();
+            foreach (KeyValuePair<string, uint> entry in BuildTrayTimes(TrayIntervals))
+            {
+                trayTimes.Add(entry.Key, entry.Value);
+            }
 
             // The page listens for this and pushes the full module settings to the runner.
             NotifyPropertyChanged(nameof(TrayIntervals));
