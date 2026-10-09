@@ -1,10 +1,9 @@
-name: _Auto Sync and Build
+name: _Sync and Build (Manual)
 
-# Every six hours, checks whether microsoft/PowerToys main has commits this fork's main does
-# not. If it does, merges upstream main into main (the same merge as GitHub's "Update branch")
-# and starts the installer workflow with a blank version, so it picks the next version itself.
-# It starts at most one successful build per 24 hours; a failed build is retried at the next
-# check. Run it by hand with "force" to build regardless of new commits or the daily limit.
+# One click to sync and build: merges microsoft/PowerToys main into this fork's main when it
+# has new commits (the same merge as GitHub's "Update branch"), then starts the installer
+# workflow with a blank version, so it picks the next version itself. Runs only when started
+# by hand; GitHub disables Actions for accounts with scheduled workflows on forks.
 #
 # Token: GITHUB_TOKEN can merge and start the build, but GitHub refuses to let it push
 # commits that change files under .github/workflows, which upstream does now and then.
@@ -12,15 +11,7 @@ name: _Auto Sync and Build
 # "Contents" and "Workflows" read/write) is used for the merge when it is set.
 
 on:
-  schedule:
-    - cron: '17 */6 * * *' # every six hours
   workflow_dispatch:
-    inputs:
-      force:
-        description: Build even if there are no new upstream commits or a build already ran today.
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: write # merge upstream into main
@@ -39,39 +30,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
-          FORCE: ${{ inputs.force && 'true' || 'false' }}
         run: |
           $repo = $env:GITHUB_REPOSITORY
           $owner = $repo.Split('/')[0]
+
+          # Don't queue a second build behind one that is already running.
+          $active = gh run list --repo $repo --workflow build-installer.yml --limit 10 --json status --jq '[.[] | select(.status != "completed")] | length'
+          if ([int]$active -gt 0) {
+            "An installer build is already queued or running; nothing started." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            return
+          }
 
           # Commits on upstream main that this fork's main does not have.
           $behind = gh api "repos/microsoft/PowerToys/compare/main...$($owner):main" --jq '.behind_by'
           if ($LASTEXITCODE -ne 0) { throw 'Could not compare the fork with upstream.' }
           Write-Host "Upstream commits not in this fork: $behind"
-
-          if ([int]$behind -eq 0 -and $env:FORCE -ne 'true') {
-            "Up to date with upstream; nothing to build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            return
-          }
-
-          # Leave it for the next check if an installer build is already queued or running.
-          $active = gh run list --repo $repo --workflow build-installer.yml --limit 10 --json status --jq '[.[] | select(.status != "completed")] | length'
-          if ([int]$active -gt 0) {
-            "$behind new upstream commit(s), but an installer build is already running; will retry on the next check." | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            return
-          }
-
-          # At most one successful automatic build per 24 hours. Runs this workflow starts are
-          # attributed to github-actions[bot]; builds started by hand neither count nor are limited.
-          if ($env:FORCE -ne 'true') {
-            $since = (Get-Date).ToUniversalTime().AddHours(-24).ToString('yyyy-MM-ddTHH:mm:ssZ')
-            $recent = gh api "repos/$repo/actions/workflows/build-installer.yml/runs?actor=github-actions%5Bbot%5D&status=success&created=%3E%3D$since" --jq '.total_count'
-            if ($LASTEXITCODE -ne 0) { throw 'Could not list recent installer builds.' }
-            if ([int]$recent -gt 0) {
-              "$behind new upstream commit(s), but an automatic build already succeeded in the last 24 hours; will check again later." | Out-File $env:GITHUB_STEP_SUMMARY -Append
-              return
-            }
-          }
 
           if ([int]$behind -gt 0) {
             # Merge upstream main into main (a fast-forward or merge commit, never a reset).
@@ -93,4 +66,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not start the installer workflow.' }
 
           $head = gh api "repos/$repo/commits/main" --jq '.sha'
-          "Merged $behind upstream commit(s) into main ($($head.Substring(0,8))) and started the installer build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          $synced = if ([int]$behind -gt 0) { "Merged $behind upstream commit(s) into main" } else { 'Already up to date with upstream; main is' }
+          "$synced ($($head.Substring(0,8))); started the installer build." | Out-File $env:GITHUB_STEP_SUMMARY -Append
