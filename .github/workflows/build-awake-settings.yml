@@ -1,7 +1,7 @@
 name: Build Awake settings change
 
 # Builds the projects touched by the Awake tray-interval change on a hosted
-# Windows runner (Visual Studio 2022, v143 toolset) and runs the Settings UI
+# Windows runner (Visual Studio 2026) and runs the Settings UI
 # unit tests. The full PowerToys solution is not built; only the Settings app,
 # the Awake module, their dependencies and the unit tests are compiled.
 
@@ -30,7 +30,7 @@ env:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 240
 
     steps:
@@ -49,9 +49,9 @@ jobs:
       - name: Install .NET SDKs
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.303
+          # The .NET 10 SDK comes from upstream's global.json, which pins an exact version.
+          global-json-file: global.json
+          dotnet-version: 8.0.x
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
