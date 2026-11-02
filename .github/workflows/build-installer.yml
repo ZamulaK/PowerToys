@@ -49,7 +49,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NUGET_PACKAGES: D:\NuGetPackages
   DOTNET_NOLOGO: 1
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   BuildPlatform: x64
@@ -57,7 +56,9 @@ env:
 
 jobs:
   installer:
-    runs-on: windows-2022
+    # Upstream builds with Visual Studio 2026: its pinned .NET SDK needs MSBuild 18 and some
+    # projects use the v145 toolset.
+    runs-on: windows-2025-vs2026
     timeout-minutes: 360
 
     steps:
@@ -66,6 +67,14 @@ jobs:
         run: |
           git config --global core.longpaths true
           New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
+
+      - name: Choose the NuGet package folder
+        shell: pwsh
+        run: |
+          # Use the D: drive when the runner has one (more free space), otherwise C:.
+          $folder = if (Test-Path 'D:\') { 'D:\NuGetPackages' } else { 'C:\NuGetPackages' }
+          Write-Host "NuGet packages go to $folder"
+          "NUGET_PACKAGES=$folder" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,9 +85,9 @@ jobs:
       - name: Install .NET SDKs
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.303
+          # The .NET 10 SDK comes from upstream's global.json, which pins an exact version.
+          global-json-file: global.json
+          dotnet-version: 8.0.x
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -110,7 +119,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            D:\NuGetPackages
+            ${{ env.NUGET_PACKAGES }}
             packages
           key: nuget-installer-${{ runner.os }}-${{ hashFiles('**/packages.config', 'Directory.Packages.props', '**/*.csproj', '**/*.vcxproj', '**/*.wixproj') }}
           restore-keys: |
@@ -175,23 +184,6 @@ jobs:
       - name: Report free disk space before build
         shell: pwsh
         run: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}} | Format-Table -AutoSize
-
-      - name: Use the v143 toolset for projects that hard-code v145
-        shell: pwsh
-        run: |
-          # The hosted runner has Visual Studio 2022 (MSVC 14.4x). Two projects pin the
-          # VS 2026 toolset explicitly instead of inheriting Cpp.Build.props, which already
-          # selects v143 on VS 2022. Rewrite them for this build only.
-          $pinned = @(
-            'src\modules\ZoomIt\ZoomItBreak\ZoomItBreak.vcxproj',
-            'src\modules\MouseUtils\CursorWrap\CursorWrapTests\CursorLog\CursorLog\CursorLog.vcxproj'
-          )
-          foreach ($file in $pinned) {
-            if (Test-Path $file) {
-              (Get-Content $file -Raw) -replace '<PlatformToolset>v145</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>' | Set-Content $file -NoNewline
-              Write-Host "Patched $file"
-            }
-          }
 
       - name: Skip the CurrentUser\Root certificate import (hangs on a hosted runner)
         shell: pwsh
