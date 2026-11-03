@@ -240,8 +240,8 @@ jobs:
           # The Settings and Quick Access executables must be signed after they are built and
           # before the installer packages them. build-installer.ps1 does build and packaging in
           # one go, so this step performs only its build half, using the repo's own helpers with
-          # the same arguments: the solution, then the two helper tools its -SkipBuild switch
-          # would otherwise leave out. The script itself runs later for everything else.
+          # the same arguments. PowerToys.slnx includes the BugReportTool and StylesReportTool
+          # projects (upstream #51657). The script itself runs later for everything else.
           Write-Host "BuildTests=$env:BuildTests"
           $global:RepoRoot = (Get-Location).Path
           $script:RepoRoot = $global:RepoRoot
@@ -251,10 +251,8 @@ jobs:
           $commonArgs = '/p:CIBuild=true /p:IsPipeline=true'
           if ($env:CMDPAL_AOT -eq 'true') { $commonArgs += ' /p:EnableCmdPalAOT=true' }
 
-          foreach ($solution in 'PowerToys.slnx', 'tools\BugReportTool\BugReportTool.sln', 'tools\StylesReportTool\StylesReportTool.sln') {
-            RestoreThenBuild $solution $commonArgs $env:BuildPlatform $env:BuildConfiguration
-            if ($LASTEXITCODE -ne 0) { throw "Build failed: $solution (exit $LASTEXITCODE)" }
-          }
+          RestoreThenBuild 'PowerToys.slnx' $commonArgs $env:BuildPlatform $env:BuildConfiguration
+          if ($LASTEXITCODE -ne 0) { throw "Build failed: PowerToys.slnx (exit $LASTEXITCODE)" }
 
       - name: Sign the Settings and Quick Access executables
         shell: pwsh
