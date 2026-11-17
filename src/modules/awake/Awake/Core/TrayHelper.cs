@@ -339,6 +339,12 @@ namespace Awake.Core
                                 break;
                             }
 
+                        case (uint)TrayCommands.TC_ALLOW_DISPLAY_OFF_LOCKED:
+                            {
+                                Manager.ToggleAllowDisplayOffWhileLocked();
+                                break;
+                            }
+
                         case (uint)TrayCommands.TC_MODE_INDEFINITE:
                             {
                                 AwakeSettings settings = Manager.ModuleSettings!.GetSettings<AwakeSettings>(Constants.AppName) ?? new AwakeSettings();
@@ -432,16 +438,17 @@ namespace Awake.Core
 
             SetTray(
                 settings.Properties.KeepDisplayOn,
+                settings.Properties.AllowDisplayOffWhileLocked,
                 settings.Properties.Mode,
                 settings.Properties.CustomTrayTimes,
                 startedFromPowerToys,
                 selectedIntervalSeconds);
         }
 
-        public static void SetTray(bool keepDisplayOn, AwakeMode mode, Dictionary<string, uint> trayTimeShortcuts, bool startedFromPowerToys, uint selectedIntervalSeconds = 0)
+        public static void SetTray(bool keepDisplayOn, bool allowDisplayOffWhileLocked, AwakeMode mode, Dictionary<string, uint> trayTimeShortcuts, bool startedFromPowerToys, uint selectedIntervalSeconds = 0)
         {
             ClearExistingTrayMenu();
-            CreateNewTrayMenu(startedFromPowerToys, keepDisplayOn, mode);
+            CreateNewTrayMenu(startedFromPowerToys, keepDisplayOn, allowDisplayOffWhileLocked, mode);
 
             InsertAwakeModeMenuItems(mode);
 
@@ -458,7 +465,7 @@ namespace Awake.Core
             }
         }
 
-        private static void CreateNewTrayMenu(bool startedFromPowerToys, bool keepDisplayOn, AwakeMode mode)
+        private static void CreateNewTrayMenu(bool startedFromPowerToys, bool keepDisplayOn, bool allowDisplayOffWhileLocked, AwakeMode mode)
         {
             TrayMenu = Bridge.CreatePopupMenu();
 
@@ -473,10 +480,11 @@ namespace Awake.Core
             }
 
             InsertMenuItem(0, TrayCommands.TC_DISPLAY_SETTING, Resources.AWAKE_KEEP_SCREEN_ON, keepDisplayOn, mode == AwakeMode.PASSIVE);
+            InsertMenuItem(1, TrayCommands.TC_ALLOW_DISPLAY_OFF_LOCKED, Resources.AWAKE_ALLOW_DISPLAY_OFF_LOCKED, allowDisplayOffWhileLocked, mode == AwakeMode.PASSIVE || !keepDisplayOn);
 
             if (!startedFromPowerToys)
             {
-                InsertSeparator(1);
+                InsertSeparator(2);
             }
         }
 
