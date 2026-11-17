@@ -317,6 +317,23 @@ jobs:
           # It uses Write-Error for a non-fatal step (the private Terminal.Versioning feed is
           # unreachable from here) and exits explicitly on real MSBuild failures, so run it with
           # a non-terminating preference and verify the output afterwards.
+          # The installer's pre-build events run generateAllFileComponents.ps1 through
+          # powershell.exe (Windows PowerShell 5.1). Launched under this pwsh 7 step it inherits
+          # pwsh's PSModulePath, can't load its own Microsoft.PowerShell.Utility, and New-Guid
+          # is "not recognized". Since upstream #52038 that script stops on the first error.
+          # Load the modules this script needs first, then put the Windows PowerShell module
+          # folders ahead of pwsh's so the child processes resolve their own modules.
+          Import-Module Microsoft.PowerShell.Utility, Microsoft.PowerShell.Management, Microsoft.PowerShell.Security
+          $winPsModules = @(
+            (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'),
+            (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+          )
+          $env:PSModulePath = (@($winPsModules) + @($env:PSModulePath -split ';' | Where-Object { $_ -and $_ -notin $winPsModules })) -join ';'
+          # Probe through cmd.exe like MSBuild does; pwsh cleans the path when it starts powershell.exe itself.
+          $probe = & cmd.exe /d /c 'powershell.exe -NoProfile -NonInteractive -Command "(New-Guid).Guid" 2>&1'
+          if ($LASTEXITCODE -ne 0 -or -not $probe) { throw "Windows PowerShell still cannot run New-Guid: $probe" }
+          Write-Host "Windows PowerShell module check passed (New-Guid -> $probe)"
+
           $ErrorActionPreference = 'Continue'
           $params = @{
             Platform      = $env:BuildPlatform
