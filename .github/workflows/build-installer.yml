@@ -254,6 +254,35 @@ jobs:
           RestoreThenBuild 'PowerToys.slnx' $commonArgs $env:BuildPlatform $env:BuildConfiguration
           if ($LASTEXITCODE -ne 0) { throw "Build failed: PowerToys.slnx (exit $LASTEXITCODE)" }
 
+      - name: Publish the preview handlers for packaging
+        shell: pwsh
+        run: |
+          # Upstream #52038 moved publish.cmd into the custom-action project's pre-build event,
+          # where a failure only shows up as an opaque MSB3073 deep inside the installer build.
+          # Run it here instead (same script, same arguments) so its output is visible, and
+          # the installer step below skips the duplicate call.
+          $global:RepoRoot = (Get-Location).Path
+          $script:RepoRoot = $global:RepoRoot
+          . .\tools\build\build-common.ps1
+          if (-not (Ensure-VsDevEnvironment)) { throw 'Could not initialize the Visual Studio developer environment.' }
+          $env:PTRoot = $global:RepoRoot
+          & cmd.exe /d /c "installer\PowerToysSetupVNext\publish.cmd" $env:BuildPlatform
+          if ($LASTEXITCODE -ne 0) { throw "publish.cmd failed (exit $LASTEXITCODE)" }
+
+      - name: Skip the installer's duplicate publish
+        shell: pwsh
+        run: |
+          # Without the IsPipeline environment variable the pre-build event re-runs publish.cmd
+          # (through VsDevCmd.bat). Setting IsPipeline itself is not an option: WiX then expects
+          # the localized resource files that only Microsoft's build farm produces. Gate that
+          # block on a variable of our own, set by the installer step below.
+          $proj = 'installer\PowerToysSetupCustomActionsVNext\PowerToysSetupCustomActionsVNext.vcxproj'
+          $old = 'IF NOT DEFINED IsPipeline ('
+          $content = Get-Content $proj -Raw
+          if (-not $content.Contains($old)) { throw "Expected '$old' not found in $proj; the pre-build event changed upstream." }
+          $content.Replace($old, 'IF NOT DEFINED PT_PUBLISHED_FOR_PACKAGING (') | Set-Content $proj -NoNewline
+          Write-Host "Patched $proj"
+
       - name: Sign the Settings and Quick Access executables
         shell: pwsh
         run: |
@@ -281,6 +310,7 @@ jobs:
         shell: pwsh
         env:
           PER_USER: ${{ inputs.per_user && 'true' || 'false' }}
+          PT_PUBLISHED_FOR_PACKAGING: '1'
         run: |
           # -SkipBuild makes the repo script do everything except the builds done above:
           # MSIX signing, DSC manifests, the CLI shim checks and the installer itself.
@@ -377,6 +407,7 @@ jobs:
             installer/build.*.errors.log
             installer/build.*.warnings.log
             tools/**/build.*.errors.log
+            artifacts/logs/**/*.log
           if-no-files-found: ignore
 
       - name: Upload binary logs on failure
@@ -387,4 +418,5 @@ jobs:
           path: |
             build.*.trace.binlog
             installer/build.*.trace.binlog
+            artifacts/logs/**/*.binlog
           if-no-files-found: ignore
